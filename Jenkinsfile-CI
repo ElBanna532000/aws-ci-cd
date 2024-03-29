@@ -1,0 +1,114 @@
+// JENKINS CI PIPELINE
+// The Code will be built into executable file (.jar) & pushed to Dockerhub
+
+pipeline {
+    agent any
+    // DECLARE THE VARIABLES
+    environment {
+        DOCKER_USERNAME = "banna53"
+    }
+
+    stages {
+        stage("1. Cleanup") {
+            // Clean workspace directory for the current build
+            steps {
+                cleanWs ()             
+            }
+        }
+
+        stage ('2. Git Checkout') {
+            steps {
+                dir ("aws-ci-cd"){
+                  script {
+                    git branch: 'main', url: 'https://github.com/ElBanna532000/aws-ci-cd.git' 
+                  }
+                }
+            }
+        }   
+        
+        stage("3. Maven Unit Test") {  
+            // Test the individual units of code using Maven
+            steps{
+                dir ("aws-ci-cd"){
+                  sh 'mvn test'        
+                }
+            }
+        }
+
+        stage('4. Maven Build') {
+            // Build the application into an executable file
+            steps{
+                dir ("aws-ci-cd"){
+                  sh 'mvn clean install'   
+                }
+            }
+        }
+
+        stage("5. Maven Integration Test") {
+            //  Test the interaction between different units of code
+            steps{
+                dir ("aws-ci-cd"){
+                  sh 'mvn verify'          
+                }
+            }
+        }
+
+        stage('6. Docker Image Build') {
+            // Build Docker Image 
+            steps{
+                dir('aws-ci-cd') {      // go to directory where 'Dockerfile' is stored
+                    script {
+                      def JOB = env.JOB_NAME.toLowerCase()           // Convert Jenkins Job name to lower-case
+                      sh "docker build -t ${JOB}:${BUILD_NUMBER} ."  // JOB_NAME & BUILD_NUMBER are Jenkins Global variable
+                    }
+                }
+            }
+        }
+        
+        stage('7. Docker Image Tag') {
+            // Rename the Docker Image before pushing to Dockerhub
+            steps{
+                dir('aws-ci-cd') {      // go to directory where Docker Image is created
+                  script {
+                    def JOB = env.JOB_NAME.toLowerCase() // Convert Jenkins Job name to lower-case
+                    sh "docker tag ${JOB}:${BUILD_NUMBER} ${DOCKER_USERNAME}/${JOB}:v${BUILD_NUMBER}"
+                    sh "docker tag ${JOB}:${BUILD_NUMBER} ${DOCKER_USERNAME}/${JOB}:latest"
+                  }
+                }
+            } 
+        }
+
+        stage('8. Trivy Image Scan') {
+            // Scan Docker images for vulnerabilities 
+            steps{
+                script { 
+                  def JOB = env.JOB_NAME.toLowerCase() // Convert Jenkins Job name to lower-case
+                  sh "trivy image ${DOCKER_USERNAME}/${JOB}:v${BUILD_NUMBER} > scan.txt"
+                }
+            }
+        }
+
+        stage('9. Docker Image Push') {
+            // Login to Dockerhub & Push the image to Dockerhub
+            steps{
+                script { 
+                  withCredentials([usernamePassword(credentialsId: 'dockerhub_creds', usernameVariable: 'docker_user', passwordVariable: 'docker_pass')]) {
+                    sh "docker login -u '${docker_user}' -p '${docker_pass}'"
+                    def JOB = env.JOB_NAME.toLowerCase() // Convert Jenkins Job name to lower-case
+                    sh "docker push ${DOCKER_USERNAME}/${JOB}:v${BUILD_NUMBER}"
+                    sh "docker push ${DOCKER_USERNAME}/${JOB}:latest"
+                  }
+                }
+            }
+        }
+
+        stage('10. Docker Image Cleanup') {
+            // Remove the unwanted images created in Jenkins Server to free-up space
+            steps{
+                script { 
+                  sh "docker image prune -af"
+                }
+            }
+        }
+    }
+}

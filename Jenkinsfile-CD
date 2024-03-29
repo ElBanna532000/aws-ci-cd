@@ -1,0 +1,44 @@
+// JENKINS CD PIPELINE
+// The image stored in Dockerhub will be deployed using K8s
+
+pipeline {
+    agent any
+    // Declaring jenkins variables
+    environment {
+    NODE_IP = '<Node_Server_Private_IP>'
+    EC2_NAME = "ec2-user"
+    PIPELINE_NAME = "CI-PIPELINE"
+    PROJECT_NAME = "aws-ci-cd"
+    }
+
+    stages {
+        stage("1. Pull Files") {
+            // Copy K8s manifest files from Master-Server workspace to Node-server
+            steps {
+              sshagent(['ec2_creds']) {         // install 'ssh agent' plugin & generate 'ssh-agent' pipeline 
+                sh "ssh -o StrictHostKeyChecking=no ${EC2_NAME}@${NODE_IP}"
+                sh "scp /var/lib/jenkins/workspace/${PIPELINE_NAME}/${PROJECT_NAME}/deployment.yaml ${EC2_NAME}@${NODE_IP}:/home/ec2-user/"
+                sh "scp /var/lib/jenkins/workspace/${PIPELINE_NAME}/${PROJECT_NAME}/service.yaml ${EC2_NAME}@${NODE_IP}:/home/ec2-user/"
+              }
+            }
+        }
+
+        stage('2. Approval') {
+            steps {
+                input message: 'Approve deployment?'
+            }
+        }
+
+        stage("3. Deployment") {
+            steps {
+              sshagent(['ec2_creds']) {
+                sh "ssh -o StrictHostKeyChecking=no ${EC2_NAME}@${NODE_IP}"   // Node-Server private IP
+                sh "ssh -o StrictHostKeyChecking=no ${EC2_NAME}@${NODE_IP} kubectl apply -f deployment.yaml"
+                sh "ssh -o StrictHostKeyChecking=no ${EC2_NAME}@${NODE_IP} kubectl apply -f service.yaml"
+                sh "ssh -o StrictHostKeyChecking=no ${EC2_NAME}@${NODE_IP} kubectl rollout restart deploy"
+                sh "ssh -o StrictHostKeyChecking=no ${EC2_NAME}@${NODE_IP} kubectl get service"
+              }
+            }
+        }
+    }
+}
